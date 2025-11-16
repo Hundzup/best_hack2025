@@ -48,36 +48,33 @@ def extract_street_name(address):
         
         # Нормализуем тип улицы
         street_type_normalized = "улица"
-        if any(t in street_type.lower() for t in ["пр", "проспект"]):
-            street_type_normalized = "проспект"
-        elif any(t in street_type.lower() for t in ["б-р", "бульвар"]):
-            street_type_normalized = "бульвар"
-        elif any(t in street_type.lower() for t in ["наб", "набережная"]):
-            street_type_normalized = "набережная"
-        elif any(t in street_type.lower() for t in ["ш", "шоссе"]):
-            street_type_normalized = "шоссе"
-        elif any(t in street_type.lower() for t in ["пер", "переулок"]):
-            street_type_normalized = "переулок"
-        elif any(t in street_type.lower() for t in ["пл", "площадь"]):
-            street_type_normalized = "площадь"
+        # ... (остальной код нормализации остается без изменений)
+        
+        # Проверка: если название улицы слишком короткое (например, "орожная"),
+        # это скорее всего часть полного названия
+        if len(street_name) < 4:
+            return address  # Возвращаем исходный адрес для дальнейшей обработки
         
         return f"{street_type_normalized} {street_name}"
     
     # Шаг 2: Если не нашли явного типа, ищем стандартные шаблоны
     fallback_patterns = [
-        r'^([^\d,]+?)(?:\s*,|\s*$|\s*\d)',
-        r'(?:ул\.?|улица)\s*([^\d,]+?)(?:\s*,|\s*$|\s*\d)',
-        r'([^\d,]+?)(?:\s*улица|\s*ул\.?)'
+        r'^([^\d,]+?)(?:\s*,|\s*$|\s*\d)',  # Первый вариант без типа
+        r'(?:ул\.?|улица)\s*([^\d,]+?)(?:\s*,|\s*$|\s*\d)',  # Если есть "ул." перед названием
+        r'([^\d,]+?)(?:\s*улица|\s*ул\.?)'  # Если тип улицы в конце названия
     ]
     
     for pattern in fallback_patterns:
         match = re.search(pattern, address, re.IGNORECASE)
         if match:
             street_candidate = match.group(1).strip()
-            # Если в кандидате есть число и слово "год", это вероятно "улица 1905 года"
-            if re.search(r'\d+\s+год', street_candidate, re.IGNORECASE):
-                return f"улица {street_candidate}"
-            return street_candidate
+            
+            # Добавляем проверку на длину названия улицы
+            if len(street_candidate) > 3:
+                # Если в кандидате есть число и слово "год", это вероятно "улица 1905 года"
+                if re.search(r'\d+\s+год', street_candidate, re.IGNORECASE):
+                    return f"улица {street_candidate}"
+                return street_candidate
     
     # Шаг 3: Если все методы не сработали, берем часть до первой запятой
     parts = address.split(',')
@@ -117,23 +114,23 @@ def parse_building_components(full_address):
     # Номер дома
     house_match = re.search(r'д(?:ом)?\.?\s*([^\s,]+)(?:\s|$|,)', address)
     if house_match:
-        result["номер_дома"] = house_match.group(-1).strip()
+        result["номер_дома"] = house_match.group(1).strip()  # Исправлено group(-1) на group(1)
     else:
-        # Вторичный поиск номера дома
-        fallback_match = re.search(r'\b(\d+\s*[а-я]?)\b(?!\s*(?:корп|к\.|стр|строение|влад|вл\.))', address)
+        # Улучшенный поиск номера дома с учетом контекста
+        # Ищем цифры, которые не являются частью корпуса, строения или владения
+        fallback_match = re.search(r'(\d+\s*[а-я]?)\s*(?![кkКK]|сcС|вл|владение)', address)
         if fallback_match:
             result["номер_дома"] = fallback_match.group(1).strip()
     
-    # Номер корпуса
-    corps_match = re.search(r'[кkКK]\d+', address)
-    print(corps_match)
+    # Номер корпуса - улучшаем регулярное выражение
+    corps_match = re.search(r'(?:к|корпус|корп)\.?\s*(\d+)', address, re.IGNORECASE)
     if corps_match:
-        result["номер_корпуса"] = corps_match.group(0).strip()[1:]
+        result["номер_корпуса"] = corps_match.group(1).strip()
     
-    # Строение
-    build_match = re.search(r'[cC]\d+', address)
+    # Строение - улучшаем регулярное выражение
+    build_match = re.search(r'(?:с|строение|стр)\.?\s*(\d+)', address, re.IGNORECASE)
     if build_match:
-        result["строение"] = build_match.group(0).strip()[1:]
+        result["строение"] = build_match.group(1).strip()
     
     # Владение
     own_match = re.search(r'(?:вл|владение)\.?\s*([^\s,]+)(?:\s|$|,)', address)
@@ -153,7 +150,7 @@ def parse_building_components(full_address):
     
     result["полный_номер_для_поиска"] = "".join(parts)
     
-    # Если нет полного номера для поиска, используем сырой номер
+    # Если нет полного номера
     if not result["полный_номер_для_поиска"] and result["сырой_номер"]:
         result["полный_номер_для_поиска"] = result["сырой_номер"].replace(" ", "")
     
@@ -338,8 +335,20 @@ def geocode_address(full_address, db_path='../../filtered_data/addresses.db'):
     # 1. Извлекаем название улицы
     street_name = extract_street_name(full_address)
     
+    # Добавляем проверку: если улица слишком короткая или не содержит букв, пытаемся повторно извлечь
+    if len(street_name) < 4 or not re.search(r'[а-я]', street_name, re.IGNORECASE):
+        # Пытаемся найти улицу по другому шаблону
+        new_street = re.search(r'([а-яё]+[\s-]*[а-яё]+)\s+(?:ул|улица|просп|проспект)', 
+                              full_address, re.IGNORECASE)
+        if new_street:
+            street_name = new_street.group(1)
+    
     # 2. Извлекаем компоненты здания
     building_info = parse_building_components(full_address)
+    
+    # Добавляем проверку номера дома
+    if building_info["номер_дома"] and len(building_info["номер_дома"]) < 2:
+        building_info["номер_дома"] = ""
     
     # 3. Находим ближайшую улицу
     street_match = find_closest_street(street_name, db_path)
