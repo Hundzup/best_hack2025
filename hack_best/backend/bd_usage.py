@@ -117,7 +117,7 @@ def parse_building_components(full_address):
     # Номер дома
     house_match = re.search(r'д(?:ом)?\.?\s*([^\s,]+)(?:\s|$|,)', address)
     if house_match:
-        result["номер_дома"] = house_match.group(1).strip()
+        result["номер_дома"] = house_match.group(-1).strip()
     else:
         # Вторичный поиск номера дома
         fallback_match = re.search(r'\b(\d+\s*[а-я]?)\b(?!\s*(?:корп|к\.|стр|строение|влад|вл\.))', address)
@@ -125,14 +125,15 @@ def parse_building_components(full_address):
             result["номер_дома"] = fallback_match.group(1).strip()
     
     # Номер корпуса
-    corps_match = re.search(r'(?:корп|к)\.?\s*([^\s,]+)(?:\s|$|,)', address)
+    corps_match = re.search(r'[кkКK]\d+', address)
+    print(corps_match)
     if corps_match:
-        result["номер_корпуса"] = corps_match.group(1).strip()
+        result["номер_корпуса"] = corps_match.group(0).strip()[1:]
     
     # Строение
-    build_match = re.search(r'(?:стр|строение)\.?\s*([^\s,]+)(?:\s|$|,)', address)
+    build_match = re.search(r'[cC]\d+', address)
     if build_match:
-        result["строение"] = build_match.group(1).strip()
+        result["строение"] = build_match.group(0).strip()[1:]
     
     # Владение
     own_match = re.search(r'(?:вл|владение)\.?\s*([^\s,]+)(?:\s|$|,)', address)
@@ -365,6 +366,7 @@ def geocode_address(full_address, db_path='../../filtered_data/addresses.db'):
                 "номер_дома": building_info["номер_дома"],
                 "номер_корпуса": building_info["номер_корпуса"],
                 "строение": building_info["строение"],
+                "название": street_match["street"],
                 "lon": building_match["lon"],
                 "lat": building_match["lat"],
                 "score": (street_match["score"] + building_match["score"]) / 2
